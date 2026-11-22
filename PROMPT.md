@@ -1,8 +1,3 @@
 # THE ONE PROMPT
 
-Build a tiny one-button browser arcade game in a single HTML file called
-index.html. A neon square auto-runs across a dark night scene; press Space
-or click to jump over spikes. Score +1 per spike cleared, speed rises as
-the score grows, collision ends the run with a GAME OVER screen and Space
-restarts. Big score at the top, ground line, parallax stars, no external
-assets, works fully offline. Keep it under 250 lines.
+Build a tiny crypto arcade game in a single HTML file called index.html. A small rocket flies across a starry night sky; move it with arrow keys or A/D, mouse or touch drag. Green candles and golden AIRDROP coins fall from the sky — catch them for points. Red candles marked RUG also fall — dodge them, one hit ends the run with a big RUGGED! screen. The longer you survive the faster it gets. Catching things bursts particles, getting rugged shakes the screen. Score and best score at the top, Space or click restarts, no external assets, works fully offline. Keep it under 300 lines.

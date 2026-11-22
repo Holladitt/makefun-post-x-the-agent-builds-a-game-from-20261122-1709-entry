@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>ZORCO DASH — one-button arcade</title>
+<title>RUG DODGE — catch the green, dodge the RUG</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   html, body { margin: 0; height: 100%; background: #070b16; overflow: hidden; }
@@ -15,127 +15,246 @@
 'use strict';
 const c = document.getElementById('game');
 const ctx = c.getContext('2d');
-const W = 1280, H = 720, GROUND = 600;
-const player = { x: 200, y: GROUND - 48, w: 48, h: 48, vy: 0, onGround: true };
-const GRAV = 0.9, JUMP = -19;
-let spikes = [], speed = 6, score = 0, best = 0, over = false, spawnIn = 50;
-const stars = Array.from({ length: 90 }, () => ({
-  x: Math.random() * W, y: Math.random() * 420,
-  s: Math.random() * 2 + 0.5, v: Math.random() * 0.4 + 0.1
-}));
+const W = 1280, H = 720;
+const RY = 610; // rocket flight altitude
+const rocket = { x: W / 2, tx: W / 2, vx: 0, bob: 0 };
+let items = [], parts = [], floats = [];
+let score = 0, best = 0, over = false, overAt = 0, shake = 0;
+let elapsed = 0, spawnIn = 40, frame = 0;
+try { best = +localStorage.getItem('rugdodge-best') || 0; } catch (e) {}
+const stars = [];
+for (let l = 0; l < 2; l++)
+  for (let i = 0; i < 45; i++)
+    stars.push({ x: Math.random() * W, y: Math.random() * 480,
+      s: Math.random() * 1.8 + 0.5, v: 0.25 + l * 0.5, layer: l });
+// static sky + moon, pre-rendered once (cheap in software rendering)
+const bg = document.createElement('canvas'); bg.width = W + 60; bg.height = H + 60;
+(function paintBg() {
+  const b = bg.getContext('2d');
+  b.translate(30, 30);
+  const sky = b.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#070b16'); sky.addColorStop(0.6, '#0b1530'); sky.addColorStop(1, '#131c33');
+  b.fillStyle = sky; b.fillRect(0, 0, W, H);
+  b.fillStyle = '#fde68a'; b.beginPath(); b.arc(1120, 110, 52, 0, 6.29); b.fill();
+  b.fillStyle = '#fcd34d'; b.beginPath(); b.arc(1104, 96, 10, 0, 6.29); b.fill();
+  b.beginPath(); b.arc(1136, 124, 7, 0, 6.29); b.fill();
+})();
+const rocketGrad = (() => {
+  const g = ctx.createLinearGradient(-14, 0, 14, 0);
+  g.addColorStop(0, '#e2e8f0'); g.addColorStop(0.5, '#ffffff'); g.addColorStop(1, '#94a3b8');
+  return g;
+})();
 
-function jump() {
-  if (over) { reset(); return; }
-  if (player.onGround) { player.vy = JUMP; player.onGround = false; }
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === ' ' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.preventDefault();
+  // death cam: RUGGED! stays up ~1.2s before a restart is accepted
+  if ((e.key === ' ' || e.key === 'Enter') && over && frame - overAt >= 72) reset();
+});
+addEventListener('keyup', e => { keys[e.key] = false; });
+let dragging = false;
+function pointerX(e) {
+  const r = c.getBoundingClientRect();
+  const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+  return x * (W / r.width);
 }
+c.addEventListener('pointerdown', e => {
+  if (over) { if (frame - overAt >= 72) reset(); return; }
+  dragging = true; rocket.tx = pointerX(e);
+});
+addEventListener('pointermove', e => { if (dragging) rocket.tx = pointerX(e); });
+addEventListener('pointerup', () => { dragging = false; });
+
 function reset() {
-  spikes = []; speed = 6; score = 0; over = false;
-  player.y = GROUND - 48; player.vy = 0; player.onGround = true; spawnIn = 50;
+  items = []; parts = []; floats = [];
+  score = 0; over = false; shake = 0; elapsed = 0; spawnIn = 30;
+  rocket.x = W / 2; rocket.tx = W / 2; rocket.vx = 0;
+  seedItems();
 }
-function spawnSpike() {
-  const w = 34 + Math.random() * 22;
-  spikes.push({ x: W + 20, w, h: 46 + Math.random() * 26 });
+function seedItems() {
+  // screen is busy from the first frame: 4 items already falling
+  const kinds = ['green', 'coin', 'green', 'red'];
+  for (let i = 0; i < 4; i++) {
+    const kind = kinds[i];
+    items.push({ x: 80 + Math.random() * (W - 160), y: -60 - i * 170, kind,
+      vy: 0, rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.04 });
+  }
 }
-function step() {
-  for (const s of stars) { s.x -= s.v; if (s.x < 0) s.x = W; }
-  if (over) return;
-  player.vy += GRAV;
-  player.y += player.vy;
-  if (player.y >= GROUND - player.h) {
-    player.y = GROUND - player.h; player.vy = 0; player.onGround = true;
+seedItems();
+function burst(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * 6.28, sp = Math.random() * 5 + 1.5;
+    parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1,
+      life: 26 + Math.random() * 14, color, s: Math.random() * 3 + 2 });
   }
-  spawnIn--;
-  if (spawnIn <= 0) { spawnSpike(); spawnIn = 70 + Math.random() * 60; }
-  for (const s of spikes) s.x -= speed;
-  while (spikes.length && spikes[0].x + spikes[0].w < -20) {
-    spikes.shift();
-    score++;
-    speed = Math.min(13, 6 + score * 0.12);
+}
+function spawn() {
+  // sometimes a red "wall" with one gap forces a real dodge;
+  // walls get wider the longer you survive
+  if (Math.random() < 0.18) {
+    const n = 3 + Math.min(2, Math.floor(elapsed / 1800));
+    const cx = 220 + Math.random() * (W - 440);
+    for (let i = 0; i < n; i++) {
+      const x = Math.max(40, Math.min(W - 40, cx + (i - (n - 1) / 2) * 190));
+      items.push({ x, y: -50, kind: 'red', vy: 0, rot: Math.random() * 6.28, vr: 0 });
+    }
+    return;
   }
-  for (const s of spikes) {
-    const overlapX = player.x + player.w - 8 > s.x + 6 && player.x + 8 < s.x + s.w - 6;
-    const overlapY = player.y + player.h - 6 > GROUND - s.h;
-    if (overlapX && overlapY) { over = true; best = Math.max(best, score); }
+  const r = Math.random();
+  const kind = r < 0.52 ? 'green' : r < 0.68 ? 'coin' : 'red';
+  items.push({ x: 40 + Math.random() * (W - 80), y: -50, kind,
+    vy: 0, rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.04 });
+}
+function speed() { return Math.min(3.8 + elapsed / 700, 9.5); }
+function gap() { return Math.max(650 - elapsed / 18, 220); }
+
+function update() {
+  frame++; elapsed++;
+  if (shake > 0) shake *= 0.88;
+  if (!over) {
+    // steering: keys move, drag eases toward target
+    let dir = 0;
+    if (keys.ArrowLeft || keys.a || keys.A) dir -= 1;
+    if (keys.ArrowRight || keys.d || keys.D) dir += 1;
+    if (dir !== 0) { rocket.vx += dir * 0.9; rocket.tx = rocket.x; dragging = false; }
+    else if (dragging) { rocket.vx += (rocket.tx - rocket.x) * 0.02; }
+    else rocket.vx *= 0.86;
+    rocket.vx = Math.max(-8, Math.min(8, rocket.vx));
+    rocket.x += rocket.vx;
+    rocket.x = Math.max(34, Math.min(W - 34, rocket.x));
+    rocket.bob = Math.sin(frame / 9) * 4;
+    if (--spawnIn <= 0) { spawn(); spawnIn = gap() / 16.7; }
+    for (const it of items) it.vy = speed() * (it.kind === 'coin' ? 0.85 : it.kind === 'red' ? 1.3 + Math.min(0.25, elapsed / 12000) : 1);
+    for (const it of items) { it.y += it.vy; it.rot += it.vr; }
+    // collisions with the rocket (forgiving hitbox)
+    const rx0 = rocket.x - 20, rx1 = rocket.x + 20, ry0 = RY - 26, ry1 = RY + 26;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      const hit = it.x > rx0 - 14 && it.x < rx1 + 14 && it.y > ry0 - 16 && it.y < ry1 + 16;
+      if (hit) {
+        if (it.kind === 'red') {
+          over = true; overAt = frame; shake = 26;
+          burst(rocket.x, RY, '#ef4444', 42); burst(rocket.x, RY, '#f97316', 24);
+          if (score > best) { best = score; try { localStorage.setItem('rugdodge-best', best); } catch (e) {} }
+        } else {
+          const pts = it.kind === 'coin' ? 25 : 10;
+          score += pts;
+          burst(it.x, it.y, it.kind === 'coin' ? '#fbbf24' : '#22c55e', 16);
+          floats.push({ x: it.x, y: it.y, txt: '+' + pts, life: 40,
+            color: it.kind === 'coin' ? '#fbbf24' : '#4ade80' });
+        }
+        items.splice(i, 1);
+      } else if (it.y > H + 60) items.splice(i, 1);
+    }
   }
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.12; p.life--;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+  for (let i = floats.length - 1; i >= 0; i--) {
+    const f = floats[i]; f.y -= 1.4; f.life--;
+    if (f.life <= 0) floats.splice(i, 1);
+  }
+  for (const s of stars) { s.x -= s.v; if (s.x < 0) s.x += W; }
+}
+
+function drawCandle(x, y, kind) {
+  const green = kind === 'green';
+  ctx.strokeStyle = green ? '#16a34a' : '#dc2626';
+  ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(x, y - 34); ctx.lineTo(x, y + 34); ctx.stroke();
+  ctx.fillStyle = green ? '#22c55e' : '#ef4444';
+  ctx.fillRect(x - 14, y - 22, 28, 44);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(green ? 'LONG' : 'RUG', x, y + 5);
+}
+function drawCoin(x, y, rot) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(Math.sin(rot) * 0.25);
+  ctx.fillStyle = '#f59e0b'; ctx.beginPath(); ctx.arc(0, 0, 19, 0, 6.29); ctx.fill();
+  ctx.fillStyle = '#fde68a'; ctx.beginPath(); ctx.arc(0, 0, 14, 0, 6.29); ctx.fill();
+  ctx.fillStyle = '#92400e'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('A', 0, 7); ctx.restore();
+}
+function drawRocket() {
+  const x = rocket.x, y = RY + rocket.bob;
+  ctx.save(); ctx.translate(x, y);
+  // flame
+  const fl = 26 + Math.random() * 16;
+  ctx.fillStyle = '#f97316';
+  ctx.beginPath(); ctx.moveTo(-9, 26); ctx.lineTo(0, 26 + fl); ctx.lineTo(9, 26); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#fde047';
+  ctx.beginPath(); ctx.moveTo(-5, 26); ctx.lineTo(0, 26 + fl * 0.6); ctx.lineTo(5, 26); ctx.closePath(); ctx.fill();
+  // fins
+  ctx.fillStyle = '#ef4444';
+  ctx.beginPath(); ctx.moveTo(-14, 8); ctx.lineTo(-24, 28); ctx.lineTo(-14, 24); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(14, 8); ctx.lineTo(24, 28); ctx.lineTo(14, 24); ctx.closePath(); ctx.fill();
+  // body
+  ctx.fillStyle = rocketGrad;
+  ctx.beginPath(); ctx.moveTo(0, -34); ctx.quadraticCurveTo(14, -12, 14, 8);
+  ctx.lineTo(14, 24); ctx.lineTo(-14, 24); ctx.lineTo(-14, 8);
+  ctx.quadraticCurveTo(-14, -12, 0, -34); ctx.closePath(); ctx.fill();
+  // window
+  ctx.fillStyle = '#0ea5e9'; ctx.beginPath(); ctx.arc(0, -6, 8, 0, 6.29); ctx.fill();
+  ctx.fillStyle = '#bae6fd'; ctx.beginPath(); ctx.arc(-2, -8, 3, 0, 6.29); ctx.fill();
+  ctx.restore();
 }
 function draw() {
-  ctx.fillStyle = '#070b16';
-  ctx.fillRect(0, 0, W, H);
-  // moon
-  ctx.fillStyle = '#facc15';
-  ctx.beginPath(); ctx.arc(1120, 110, 46, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#eab308';
-  ctx.beginPath(); ctx.arc(1104, 98, 10, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(1132, 124, 7, 0, Math.PI * 2); ctx.fill();
-  // stars
-  for (const s of stars) {
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx.fillRect(s.x, s.y, s.s, s.s);
-  }
-  // ground
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(0, GROUND, W, H - GROUND);
-  ctx.fillStyle = '#22d3ee';
-  ctx.fillRect(0, GROUND, W, 4);
-  // spikes
-  for (const s of spikes) {
-    ctx.fillStyle = '#f43f5e';
-    ctx.beginPath();
-    ctx.moveTo(s.x, GROUND);
-    ctx.lineTo(s.x + s.w / 2, GROUND - s.h);
-    ctx.lineTo(s.x + s.w, GROUND);
-    ctx.closePath();
-    ctx.fill();
-  }
-  // player
   ctx.save();
-  ctx.shadowColor = '#22d3ee';
-  ctx.shadowBlur = 24;
-  ctx.fillStyle = '#22d3ee';
-  ctx.fillRect(player.x, player.y, player.w, player.h);
-  ctx.restore();
-  ctx.fillStyle = '#0e7490';
-  ctx.fillRect(player.x + 10, player.y + 12, 10, 10);
-  ctx.fillRect(player.x + 28, player.y + 12, 10, 10);
-  // score + hint
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 64px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText(String(score).padStart(3, '0'), W / 2, 96);
-  ctx.font = 'bold 22px monospace';
-  ctx.fillStyle = '#94a3b8';
-  ctx.fillText('ZORCO DASH — SPACE / CLICK TO JUMP', W / 2, 140);
+  if (shake > 0.5) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+  // sky + moon (pre-rendered), stars in two cheap layers
+  ctx.drawImage(bg, -30, -30);
+  ctx.fillStyle = '#e2e8f0';
+  ctx.globalAlpha = 0.55 + 0.2 * Math.sin(frame / 40);
+  for (const s of stars) if (s.layer === 0) ctx.fillRect(s.x, s.y, s.s, s.s);
+  ctx.globalAlpha = 0.9;
+  for (const s of stars) if (s.layer === 1) ctx.fillRect(s.x, s.y, s.s, s.s);
+  ctx.globalAlpha = 1;
+  // ground glow
+  ctx.fillStyle = '#0e7490'; ctx.fillRect(0, 668, W, 3);
+  ctx.fillStyle = 'rgba(14,116,144,0.25)'; ctx.fillRect(0, 671, W, 49);
+  for (const it of items) {
+    if (it.kind === 'coin') drawCoin(it.x, it.y, it.rot);
+    else drawCandle(it.x, it.y, it.kind);
+  }
+  for (const p of parts) {
+    ctx.globalAlpha = Math.max(0, p.life / 30);
+    ctx.fillStyle = p.color; ctx.fillRect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s);
+  }
+  ctx.globalAlpha = 1;
+  drawRocket();
+  for (const f of floats) {
+    ctx.globalAlpha = Math.max(0, f.life / 40);
+    ctx.fillStyle = f.color; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(f.txt, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+  // HUD
+  ctx.textAlign = 'left'; ctx.fillStyle = '#f1f5f9'; ctx.font = 'bold 30px monospace';
+  ctx.fillText('SCORE ' + String(score).padStart(4, '0'), 24, 46);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#22d3ee'; ctx.font = 'bold 26px monospace';
+  ctx.fillText('RUG DODGE', W / 2, 44);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 24px monospace';
+  ctx.fillText('BEST ' + String(best).padStart(4, '0'), W - 24, 44);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#64748b'; ctx.font = '16px monospace';
+  ctx.fillText('catch GREEN +10  •  AIRDROP +25  •  dodge RUG', W / 2, 72);
   if (over) {
-    ctx.fillStyle = 'rgba(7,11,22,0.72)';
-    ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#f43f5e';
-    ctx.font = 'bold 84px monospace';
-    ctx.fillText('GAME OVER', W / 2, 330);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 36px monospace';
-    ctx.fillText('SCORE ' + score + '   BEST ' + best, W / 2, 400);
-    ctx.fillStyle = '#22d3ee';
-    ctx.font = 'bold 28px monospace';
-    ctx.fillText('PRESS SPACE TO RUN AGAIN', W / 2, 460);
+    ctx.fillStyle = 'rgba(7,11,22,0.72)'; ctx.fillRect(-30, -30, W + 60, H + 60);
+    ctx.fillStyle = '#ef4444'; ctx.font = 'bold 110px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('RUGGED!', W / 2, 330);
+    ctx.fillStyle = '#f1f5f9'; ctx.font = 'bold 40px monospace';
+    ctx.fillText('SCORE ' + score + '   •   BEST ' + best, W / 2, 400);
+    ctx.fillStyle = '#94a3b8'; ctx.font = '24px monospace';
+    ctx.fillText('press SPACE or click to fly again', W / 2, 452);
   }
+  ctx.restore();
 }
-function loop() { step(); draw(); requestAnimationFrame(loop); }
-window.addEventListener('keydown', e => {
-  if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
-});
-c.addEventListener('pointerdown', jump);
-// debug hook for the capture driver: read-only game state
-window.__game = {
-  get state() {
-    return {
-      score, over, speed,
-      px: player.x, py: player.y, pv: player.vy, onGround: player.onGround,
-      nextSpike: spikes.length ? { x: spikes[0].x, w: spikes[0].w } : null
-    };
-  }
-};
-reset();
-requestAnimationFrame(loop);
+window.__game = { get state() {
+  return { over, score, best, rx: rocket.x, ry: RY,
+    items: items.map(i => ({ x: i.x, y: i.y, kind: i.kind })) };
+} };
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
 </script>
 </body>
 </html>
