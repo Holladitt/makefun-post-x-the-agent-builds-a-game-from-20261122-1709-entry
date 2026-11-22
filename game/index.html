@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ZORCO DASH — one-button arcade</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #070b16; overflow: hidden; }
+  canvas { display: block; margin: 0 auto; background: #070b16; }
+</style>
+</head>
+<body>
+<canvas id="game" width="1280" height="720"></canvas>
+<script>
+'use strict';
+const c = document.getElementById('game');
+const ctx = c.getContext('2d');
+const W = 1280, H = 720, GROUND = 600;
+const player = { x: 200, y: GROUND - 48, w: 48, h: 48, vy: 0, onGround: true };
+const GRAV = 0.9, JUMP = -19;
+let spikes = [], speed = 6, score = 0, best = 0, over = false, spawnIn = 50;
+const stars = Array.from({ length: 90 }, () => ({
+  x: Math.random() * W, y: Math.random() * 420,
+  s: Math.random() * 2 + 0.5, v: Math.random() * 0.4 + 0.1
+}));
+
+function jump() {
+  if (over) { reset(); return; }
+  if (player.onGround) { player.vy = JUMP; player.onGround = false; }
+}
+function reset() {
+  spikes = []; speed = 6; score = 0; over = false;
+  player.y = GROUND - 48; player.vy = 0; player.onGround = true; spawnIn = 50;
+}
+function spawnSpike() {
+  const w = 34 + Math.random() * 22;
+  spikes.push({ x: W + 20, w, h: 46 + Math.random() * 26 });
+}
+function step() {
+  for (const s of stars) { s.x -= s.v; if (s.x < 0) s.x = W; }
+  if (over) return;
+  player.vy += GRAV;
+  player.y += player.vy;
+  if (player.y >= GROUND - player.h) {
+    player.y = GROUND - player.h; player.vy = 0; player.onGround = true;
+  }
+  spawnIn--;
+  if (spawnIn <= 0) { spawnSpike(); spawnIn = 70 + Math.random() * 60; }
+  for (const s of spikes) s.x -= speed;
+  while (spikes.length && spikes[0].x + spikes[0].w < -20) {
+    spikes.shift();
+    score++;
+    speed = Math.min(13, 6 + score * 0.12);
+  }
+  for (const s of spikes) {
+    const overlapX = player.x + player.w - 8 > s.x + 6 && player.x + 8 < s.x + s.w - 6;
+    const overlapY = player.y + player.h - 6 > GROUND - s.h;
+    if (overlapX && overlapY) { over = true; best = Math.max(best, score); }
+  }
+}
+function draw() {
+  ctx.fillStyle = '#070b16';
+  ctx.fillRect(0, 0, W, H);
+  // moon
+  ctx.fillStyle = '#facc15';
+  ctx.beginPath(); ctx.arc(1120, 110, 46, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#eab308';
+  ctx.beginPath(); ctx.arc(1104, 98, 10, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(1132, 124, 7, 0, Math.PI * 2); ctx.fill();
+  // stars
+  for (const s of stars) {
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.fillRect(s.x, s.y, s.s, s.s);
+  }
+  // ground
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(0, GROUND, W, H - GROUND);
+  ctx.fillStyle = '#22d3ee';
+  ctx.fillRect(0, GROUND, W, 4);
+  // spikes
+  for (const s of spikes) {
+    ctx.fillStyle = '#f43f5e';
+    ctx.beginPath();
+    ctx.moveTo(s.x, GROUND);
+    ctx.lineTo(s.x + s.w / 2, GROUND - s.h);
+    ctx.lineTo(s.x + s.w, GROUND);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // player
+  ctx.save();
+  ctx.shadowColor = '#22d3ee';
+  ctx.shadowBlur = 24;
+  ctx.fillStyle = '#22d3ee';
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+  ctx.restore();
+  ctx.fillStyle = '#0e7490';
+  ctx.fillRect(player.x + 10, player.y + 12, 10, 10);
+  ctx.fillRect(player.x + 28, player.y + 12, 10, 10);
+  // score + hint
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 64px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(String(score).padStart(3, '0'), W / 2, 96);
+  ctx.font = 'bold 22px monospace';
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('ZORCO DASH — SPACE / CLICK TO JUMP', W / 2, 140);
+  if (over) {
+    ctx.fillStyle = 'rgba(7,11,22,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#f43f5e';
+    ctx.font = 'bold 84px monospace';
+    ctx.fillText('GAME OVER', W / 2, 330);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 36px monospace';
+    ctx.fillText('SCORE ' + score + '   BEST ' + best, W / 2, 400);
+    ctx.fillStyle = '#22d3ee';
+    ctx.font = 'bold 28px monospace';
+    ctx.fillText('PRESS SPACE TO RUN AGAIN', W / 2, 460);
+  }
+}
+function loop() { step(); draw(); requestAnimationFrame(loop); }
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
+});
+c.addEventListener('pointerdown', jump);
+// debug hook for the capture driver: read-only game state
+window.__game = {
+  get state() {
+    return {
+      score, over, speed,
+      px: player.x, py: player.y, pv: player.vy, onGround: player.onGround,
+      nextSpike: spikes.length ? { x: spikes[0].x, w: spikes[0].w } : null
+    };
+  }
+};
+reset();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
